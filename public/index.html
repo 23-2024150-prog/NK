@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Emoji Tactics Online Fixed</title>
+    <title>Emoji Tactics Online Fixed Vol.3</title>
     <script src="/socket.io/socket.io.js"></script>
     <style>
         * { touch-action: none; -webkit-user-select: none; user-select: none; box-sizing: border-box; }
@@ -21,7 +21,7 @@
         .other-selected { border-color: #333 !important; background: #eee; opacity: 0.8; }
         .cost { position: absolute; top: -5px; right: -5px; background: #f1c40f; padding: 1px 4px; border-radius: 4px; font-weight: bold; border: 1px solid #b8860b; font-size: 10px; color: black; }
         .footer-area { height: 100px; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; border-top: 1px solid #ddd; gap: 5px; }
-        #start-btn { padding: 12px 50px; font-size: 18px; background: #ccc; color: #888; border: none; border-radius: 25px; font-weight: bold; pointer-events: none; }
+        #start-btn { padding: 12px 50px; font-size: 18px; background: #ccc; color: #888; border: none; border-radius: 25px; font-weight: bold; display: none; }
         #start-btn.ready { background: linear-gradient(135deg, #ff9f43, #ff6b6b); color: white; cursor: pointer; pointer-events: auto; }
         #ui { position: absolute; inset: 0; pointer-events: none; display: none; z-index: 30; }
         .side-bar { position: absolute; top: 0; bottom: 0; width: 90px; display: flex; align-items: center; pointer-events: auto; }
@@ -33,27 +33,24 @@
         .mp-fill { position: absolute; bottom: 0; width: 100%; transition: height 0.1s; }
         #base-hp { position: absolute; top: 15px; width: 100%; display: flex; justify-content: center; gap: 30px; }
         .hp-box { width: 35%; height: 12px; background: rgba(0,0,0,0.6); border: 1.5px solid #fff; border-radius: 6px; overflow: hidden; }
+        #result-screen { position: absolute; inset: 0; background: rgba(0,0,0,0.9); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 100; color: white; }
     </style>
 </head>
 <body>
 
 <div id="setup-screen">
     <div id="host-panel" class="host-controls" style="display:none;">
-        <b>【ホスト設定】</b> 
         HP: <input type="number" id="rule-hp" value="2000" style="width:60px" onchange="syncRules()"> 
         MP速: <input type="number" id="rule-mp" value="0.22" step="0.05" style="width:50px" onchange="syncRules()">
     </div>
-    <div id="status-msg" style="text-align:center; padding:5px; background:#eee; font-size:12px;">対戦相手を待っています...</div>
-    
     <div class="setup-container">
-        <div class="player-side p2-setup"><h3>RED TEAM</h3><div class="unit-grid" id="grid2"></div></div>
-        <div class="player-side p1-setup"><h3>BLUE TEAM</h3><div class="unit-grid" id="grid1"></div></div>
+        <div class="player-side p2-setup"><h3>RED</h3><div class="unit-grid" id="grid2"></div></div>
+        <div class="player-side p1-setup"><h3>BLUE</h3><div class="unit-grid" id="grid1"></div></div>
     </div>
-    
     <div class="footer-area">
-        <div id="deck-status" style="font-size:14px; font-weight:bold; color:#555;">デッキを選択してください (0/5)</div>
+        <div id="deck-status">デッキを選択 (0/5)</div>
         <button id="start-btn" onclick="requestStart()">バトル開始 🔥</button>
-        <div id="guest-msg" style="display:none; color:#e67e22; font-weight:bold;">ホストの開始を待機中...</div>
+        <div id="guest-msg" style="display:none;">ホストの開始待機中...</div>
     </div>
 </div>
 
@@ -64,6 +61,11 @@
     </div>
     <div class="side-bar p2-bar"><div class="slots" id="slots2"></div><div class="mp-bar"><div id="mp2-fill" class="mp-fill" style="background:#ff4757;"></div></div></div>
     <div class="side-bar p1-bar"><div class="slots" id="slots1"></div><div class="mp-bar"><div id="mp1-fill" class="mp-fill" style="background:#2e86de;"></div></div></div>
+</div>
+
+<div id="result-screen">
+    <h1 id="winner-text">WINNER</h1>
+    <button onclick="location.reload()">もう一度遊ぶ</button>
 </div>
 
 <canvas id="gameCanvas"></canvas>
@@ -85,56 +87,56 @@ const ALL_UNITS = [
 ];
 
 let myRole = 0, isHost = false, gameRunning = false, mpRegen = 0.22, baseMaxHp = 2000;
-let p1Deck = [], p2Deck = [], units = [], bullets = [], obstacles = [], effects = [], gameTime = 0;
+let p1Deck = [], p2Deck = [], units = [], gameTime = 0;
 const players = { 1: { hp: 2000, mp: 40, selected: 0, deck: [] }, 2: { hp: 2000, mp: 40, selected: 0, deck: [] } };
 const canvas = document.getElementById('gameCanvas'), ctx = canvas.getContext('2d');
 
-// --- Socket Events ---
 socket.on('init_role', data => {
     myRole = data.role; isHost = data.isHost;
-    if(isHost) {
-        document.getElementById('host-panel').style.display = 'block';
-        document.getElementById('start-btn').style.display = 'block';
-    } else {
-        document.getElementById('guest-msg').style.display = 'block';
-        document.getElementById('start-btn').style.display = 'none';
-    }
+    if(isHost) document.getElementById('host-panel').style.display = 'block';
+    if(isHost) document.getElementById('start-btn').style.display = 'block';
+    else document.getElementById('guest-msg').style.display = 'block';
     applyRules(data.rules);
 });
 
-socket.on('player_joined', () => {
-    document.getElementById('status-msg').innerText = "プレイヤーが揃いました！";
-    updateStartBtn();
-});
-
-socket.on('rules_updated', applyRules);
-
-// 相手のデッキ選択を同期
 socket.on('deck_sync', data => {
     if (data.role === 1) p1Deck = data.deck; else p2Deck = data.deck;
     updateDeckVisuals();
-    updateStartBtn();
+});
+
+socket.on('hp_update', data => {
+    players[1].hp = data.hp1;
+    players[2].hp = data.hp2;
+    document.getElementById('hp1-fill').style.width = (data.hp1/baseMaxHp*100) + '%';
+    document.getElementById('hp2-fill').style.width = (data.hp2/baseMaxHp*100) + '%';
+});
+
+socket.on('game_over', data => {
+    gameRunning = false;
+    document.getElementById('result-screen').style.display = 'flex';
+    document.getElementById('winner-text').innerText = (data.winner === 1 ? "BLUE" : "RED") + " WIN!";
+    document.getElementById('winner-text').style.color = (data.winner === 1 ? "#2e86de" : "#ff4757");
 });
 
 socket.on('game_start', startGame);
 
 socket.on('spawn', data => {
+    // 相手から送られてきた割合座標を自分の画面サイズに変換
     const type = ALL_UNITS.find(u => u.name === data.name);
-    units.push(new Unit(canvas.width - data.x, data.y, data.owner, type));
+    const realX = (1 - data.rx) * canvas.width;
+    const realY = data.ry * canvas.height;
+    units.push(new Unit(realX, realY, data.owner, type));
 });
 
-// --- Logic ---
 function applyRules(r) {
     baseMaxHp = r.hp; mpRegen = r.mpRegen;
     players[1].hp = players[2].hp = r.hp;
 }
 
 function syncRules() {
-    if(!isHost) return;
-    socket.emit('update_rules', { hp: parseInt(document.getElementById('rule-hp').value), mpRegen: parseFloat(document.getElementById('rule-mp').value) });
+    if(isHost) socket.emit('update_rules', { hp: parseInt(document.getElementById('rule-hp').value), mpRegen: parseFloat(document.getElementById('rule-mp').value) });
 }
 
-// デッキUIの生成
 [1, 2].forEach(pID => {
     const grid = document.getElementById('grid' + pID);
     ALL_UNITS.forEach((u, i) => {
@@ -144,52 +146,23 @@ function syncRules() {
         card.onclick = () => {
             if(myRole !== pID) return;
             const deck = pID === 1 ? p1Deck : p2Deck;
-            if (deck.includes(i)) deck.splice(deck.indexOf(i),1);
-            else if (deck.length < 5) deck.push(i);
-            
+            if (deck.includes(i)) deck.splice(deck.indexOf(i),1); else if (deck.length < 5) deck.push(i);
             socket.emit('deck_sync', { role: myRole, deck: deck });
             updateDeckVisuals();
-            updateStartBtn();
         };
         grid.appendChild(card);
     });
 });
 
 function updateDeckVisuals() {
-    // 全カードのクラスを一旦リセット
     document.querySelectorAll('.unit-card').forEach(c => c.classList.remove('selected', 'other-selected'));
-    
-    p1Deck.forEach(idx => {
-        const card = document.querySelector(`.card-1-${idx}`);
-        if(card) card.classList.add(myRole === 1 ? 'selected' : 'other-selected');
-    });
-    p2Deck.forEach(idx => {
-        const card = document.querySelector(`.card-2-${idx}`);
-        if(card) card.classList.add(myRole === 2 ? 'selected' : 'other-selected');
-    });
-
-    const myDeckLen = (myRole === 1 ? p1Deck : p2Deck).length;
-    document.getElementById('deck-status').innerText = `デッキを選択してください (${myDeckLen}/5)`;
-}
-
-function updateStartBtn() {
-    const btn = document.getElementById('start-btn');
+    p1Deck.forEach(idx => document.querySelector(`.card-1-${idx}`)?.classList.add(myRole === 1 ? 'selected' : 'other-selected'));
+    p2Deck.forEach(idx => document.querySelector(`.card-2-${idx}`)?.classList.add(myRole === 2 ? 'selected' : 'other-selected'));
     const ready = (p1Deck.length === 5 && p2Deck.length === 5);
-    if(ready) {
-        btn.classList.add('ready');
-        document.getElementById('deck-status').innerText = "準備完了！";
-        document.getElementById('deck-status').style.color = "green";
-    } else {
-        btn.classList.remove('ready');
-        document.getElementById('deck-status').style.color = "#555";
-    }
+    document.getElementById('start-btn').className = ready ? 'ready' : '';
 }
 
-function requestStart() {
-    if(p1Deck.length === 5 && p2Deck.length === 5) {
-        socket.emit('request_start');
-    }
-}
+function requestStart() { if(p1Deck.length === 5 && p2Deck.length === 5) socket.emit('request_start'); }
 
 function startGame() {
     gameRunning = true;
@@ -201,7 +174,6 @@ function startGame() {
     resize(); initBattleUI(); loop();
 }
 
-// ユニット生成、描画、ループなどは前回と同様（省略せず統合）
 function initBattleUI() {
     [1, 2].forEach(id => {
         const container = document.getElementById('slots' + id); container.innerHTML = '';
@@ -214,60 +186,47 @@ function initBattleUI() {
     });
 }
 
-function resize() {
-    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-    const w = canvas.width, h = canvas.height;
-    obstacles = [{x:w/2, y:h/2, r:55, hp:1000}, {x:w/2, y:h*0.25, r:35, hp:600}, {x:w/2, y:h*0.75, r:35, hp:600}].map(o => ({ ...o, maxHp: o.hp, active: true, timer: 0 }));
-}
+function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
 
 class Unit {
     constructor(x, y, owner, type) {
         this.x = x; this.y = y; this.owner = owner; this.type = {...type};
         this.hp = type.hp; this.maxHp = type.hp; this.active = true;
         this.vx = (owner === 2) ? type.speed : -type.speed;
-        this.vy = 0; this.cooldown = 0; this.target = null;
+        this.cooldown = 0;
     }
     update() {
-        if (this.target && !this.target.active) this.target = null;
-        let blocked = false;
-        obstacles.forEach(o => { if (o.active && Math.hypot(this.x-o.x, this.y-o.y) < this.type.radius + o.r + 5) { blocked = true; this.target = o; } });
-        if (!this.target) units.forEach(u => { if(u.owner !== this.owner && Math.hypot(u.x-this.x, u.y-this.y) < this.type.radius + u.type.radius + 10) this.target = u; });
-        if (this.target) {
-            if (++this.cooldown >= this.type.interval) {
-                this.target.hp -= this.type.atk;
-                if (this.type.isBomb) { this.active = false; effects.push({x:this.target.x, y:this.target.y, life:15}); }
-                this.cooldown = 0;
+        // 前進
+        this.x += this.vx;
+        // 相手拠点への到達判定（自分の画面だけで判定しサーバーへ送る）
+        if (this.owner === myRole) {
+            if ((myRole === 1 && this.x < 30) || (myRole === 2 && this.x > canvas.width - 30)) {
+                socket.emit('base_damage', { targetRole: myRole === 1 ? 2 : 1, damage: 100 });
+                this.active = false;
             }
-        } else if (!blocked) {
-            this.x += this.vx; this.y += this.vy;
         }
+        // 簡易衝突（相手ユニットとの接触）
+        units.forEach(u => {
+            if (u.owner !== this.owner && Math.hypot(this.x - u.x, this.y - u.y) < 30) {
+                u.hp -= this.type.atk / 60; // 毎フレーム微量ダメージ
+            }
+        });
         if (this.hp <= 0) this.active = false;
-        if (this.x < 30 || this.x > canvas.width - 30) { players[this.x < 30 ? 2 : 1].hp -= 100; this.active = false; }
     }
     draw() {
         ctx.save(); ctx.translate(this.x, this.y);
-        ctx.font = `${this.type.radius * 2}px serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        ctx.font = `24px serif`; ctx.textAlign = "center";
         ctx.fillText(EMOJI[this.type.name], 0, 0);
-        ctx.fillStyle = "white"; ctx.fillRect(-12, -this.type.radius - 10, 24, 3);
-        ctx.fillStyle = this.owner === 1 ? "#2e86de" : "#ff4757"; ctx.fillRect(-12, -this.type.radius - 10, 24 * (this.hp/this.maxHp), 3);
         ctx.restore();
     }
 }
 
 function loop() {
     if (!gameRunning) return;
-    gameTime++; ctx.clearRect(0,0,canvas.width,canvas.height);
-    ctx.fillStyle = "#1b3d17"; ctx.fillRect(0,0,canvas.width,canvas.height);
-    [1, 2].forEach(id => {
-        players[id].mp = Math.min(100, players[id].mp + mpRegen);
-        document.getElementById(`mp${id}-fill`).style.height = players[id].mp + '%';
-        document.getElementById(`hp${id}-fill`).style.width = (players[id].hp/baseMaxHp*100) + '%';
-    });
-    obstacles.forEach(o => {
-        if (!o.active) return;
-        ctx.font = `${o.r * 1.5}px serif`; ctx.fillText(EMOJI.obs, o.x, o.y);
-        if (o.hp <= 0) o.active = false;
-    });
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    players[myRole].mp = Math.min(100, players[myRole].mp + mpRegen);
+    document.getElementById(`mp${myRole}-fill`).style.height = players[myRole].mp + '%';
+    
     units.forEach(u => { u.update(); u.draw(); });
     units = units.filter(u => u.active);
     requestAnimationFrame(loop);
@@ -277,9 +236,11 @@ canvas.addEventListener('mousedown', e => {
     if (!gameRunning || !myRole) return;
     const pType = players[myRole].deck[players[myRole].selected];
     if (players[myRole].mp >= pType.cost) {
-        units.push(new Unit(e.clientX, e.clientY, myRole, pType));
         players[myRole].mp -= pType.cost;
-        socket.emit('spawn', { x: e.clientX, y: e.clientY, owner: myRole, name: pType.name });
+        // 自分の画面に出す
+        units.push(new Unit(e.clientX, e.clientY, myRole, pType));
+        // サーバーへ「割合座標」で送る
+        socket.emit('spawn', { rx: e.clientX / canvas.width, ry: e.clientY / canvas.height, owner: myRole, name: pType.name });
     }
 });
 </script>
