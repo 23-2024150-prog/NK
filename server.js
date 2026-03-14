@@ -22,12 +22,21 @@ io.on('connection', (socket) => {
         const role = isHost ? 1 : 2;
         gameState.players[socket.id] = { role, isHost };
 
+        // 自分の役割を通知
         socket.emit('init_role', { role, isHost, rules: gameState.rules });
 
+        // 2人揃ったことを全員に通知
         if (Object.keys(gameState.players).length === 2) {
-            io.emit('player_joined', { count: 2 });
+            io.emit('player_joined');
         }
 
+        // --- 追加: デッキ選択情報の同期 ---
+        socket.on('deck_sync', (data) => {
+            // 相手に「誰がどのデッキを選んだか」を転送する
+            socket.broadcast.emit('deck_sync', data);
+        });
+
+        // ルール更新の同期
         socket.on('update_rules', (newRules) => {
             if (gameState.players[socket.id]?.isHost) {
                 gameState.rules = newRules;
@@ -35,15 +44,22 @@ io.on('connection', (socket) => {
             }
         });
 
+        // ゲーム開始要求
         socket.on('request_start', () => {
-            if (gameState.players[socket.id]?.isHost) io.emit('game_start');
+            if (gameState.players[socket.id]?.isHost) {
+                io.emit('game_start');
+            }
         });
 
-        socket.on('spawn', (data) => socket.broadcast.emit('spawn', data));
+        // ユニット出現の同期
+        socket.on('spawn', (data) => {
+            socket.broadcast.emit('spawn', data);
+        });
     }
 
     socket.on('disconnect', () => {
         delete gameState.players[socket.id];
+        // 誰もいなくなったら設定をリセット
         if (Object.keys(gameState.players).length === 0) {
             gameState.rules = { hp: 2000, mpRegen: 0.22 };
         }
