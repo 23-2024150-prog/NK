@@ -11,59 +11,54 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 let gameState = {
     players: {},
-    rules: { hp: 2000, mpRegen: 0.22 }
+    rules: { hp: 2000, mpRegen: 0.22 },
+    currentHP: { 1: 2000, 2: 2000 },
+    isGameOver: false
 };
 
 io.on('connection', (socket) => {
     const pIds = Object.keys(gameState.players);
-
     if (pIds.length < 2) {
-        const isHost = pIds.length === 0;
-        const role = isHost ? 1 : 2;
-        gameState.players[socket.id] = { role, isHost };
+        const role = pIds.length === 0 ? 1 : 2;
+        gameState.players[socket.id] = { role, isHost: role === 1 };
+        socket.emit('init_role', { role, isHost: role === 1, rules: gameState.rules });
+        if (Object.keys(gameState.players).length === 2) io.emit('player_joined');
 
-        // 自分の役割を通知
-        socket.emit('init_role', { role, isHost, rules: gameState.rules });
-
-        // 2人揃ったことを全員に通知
-        if (Object.keys(gameState.players).length === 2) {
-            io.emit('player_joined');
-        }
-
-        // --- 追加: デッキ選択情報の同期 ---
-        socket.on('deck_sync', (data) => {
-            // 相手に「誰がどのデッキを選んだか」を転送する
-            socket.broadcast.emit('deck_sync', data);
+        socket.on('deck_sync', (data) => socket.broadcast.emit('deck_sync', data));
+        socket.on('update_rules', (r) => { 
+            gameState.rules = r; 
+            gameState.currentHP = { 1: r.hp, 2: r.hp };
+            socket.broadcast.emit('rules_updated', r); 
         });
 
-        // ルール更新の同期
-        socket.on('update_rules', (newRules) => {
-            if (gameState.players[socket.id]?.isHost) {
-                gameState.rules = newRules;
-                socket.broadcast.emit('rules_updated', newRules);
-            }
-        });
-
-        // ゲーム開始要求
         socket.on('request_start', () => {
-            if (gameState.players[socket.id]?.isHost) {
-                io.emit('game_start');
-            }
+            gameState.isGameOver = false;
+            gameState.currentHP = { 1: gameState.rules.hp, 2: gameState.rules.hp };
+            io.emit('game_start');
         });
 
-        // ユニット出現の同期
-        socket.on('spawn', (data) => {
-            socket.broadcast.emit('spawn', data);
+        // ユニット出現（座標を割合 0~1 で転送）
+        socket.on('spawn', (data) => socket.broadcast.emit('spawn', data));
+
+        // ダメージ計算をサーバーで一括管理
+        socket.on('base_damage', (data) => {
+            if (gameState.isGameOver) return;
+            gameState.currentHP[data.targetRole] -= data.damage;
+            io.emit('hp_update', { hp1: gameState.currentHP[1], hp2: gameState.currentHP[2] });
+
+            if (gameState.currentHP[data.targetRole] <= 0) {
+                gameState.isGameOver = true;
+                io.emit('game_over', { winner: data.targetRole === 1 ? 2 : 1 });
+            }
         });
     }
 
     socket.on('disconnect', () => {
         delete gameState.players[socket.id];
-        // 誰もいなくなったら設定をリセット
         if (Object.keys(gameState.players).length === 0) {
             gameState.rules = { hp: 2000, mpRegen: 0.22 };
+            gameState.isGameOver = false;
         }
-        io.emit('player_left');
     });
 });
 
